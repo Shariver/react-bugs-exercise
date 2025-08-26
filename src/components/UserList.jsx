@@ -8,14 +8,13 @@ export default function UserList({ value: filters, onChange }) {
   const [loadError, setLoadError] = useState(null)
 
   useEffect(() => {
-    onChange({ ...filters }),
-    runSearch()
+    const controller = new AbortController()
+    runSearch(controller.signal)
+    return () => controller.abort()
   }, [filters])
 
   const setQuery = (q) => {
-    filters.query = String(q ?? '')
-    filters.page = 1
-    onChange(filters)
+    onChange({ ...filters, query: String(q ?? ''), page: 1 })
   }
   const setPageSize = (n) => onChange({ ...filters, pageSize: Number(n), page: 1 })
   const goTo = (p) => p > 0 && onChange({ ...filters, page: p })
@@ -23,7 +22,7 @@ export default function UserList({ value: filters, onChange }) {
   // Latencia simulada no borrar !
   const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-  async function fetchUsers({ q, page, pageSize }) {
+  async function fetchUsers({ q, page, pageSize }, signal) {
     // jitter aleatorio + penalización si incluye determinadas letras no borrar 
     // Simular latencia distinta en cada peticion
     const jitter = 200 + Math.random() * 1200
@@ -36,7 +35,7 @@ export default function UserList({ value: filters, onChange }) {
     const url = q && q.trim() !== ''
       ? `${base}/search?${params.toString()}&q=${encodeURIComponent(q)}`
       : `${base}?${params.toString()}`
-    const res = await http.get(url) // sin AbortController / sin cancel tokens
+    const res = await http.get(url, { signal }) // sin AbortController / sin cancel tokens
     const data = res.data
     const list = (data.users || []).map(u => ({
       id: u.id,
@@ -46,7 +45,7 @@ export default function UserList({ value: filters, onChange }) {
     return { items: list, total: data.total ?? list.length }
   }
 
-  async function runSearch() {
+  async function runSearch(signal) {
     setLoadError(null)
     setLoading(true)
     try {
@@ -54,10 +53,13 @@ export default function UserList({ value: filters, onChange }) {
         q: filters.query,
         page: filters.page,
         pageSize: filters.pageSize,
-      })
+      }, signal)
       setItems(res.items)
       setTotal(res.total)
     } catch (e) {
+      if (e.name === 'CanceledError' || e.name === 'AbortError') {
+        return;
+      }
       setLoadError(e?.message || String(e))
       setItems([])
       setTotal(0)
@@ -92,7 +94,6 @@ export default function UserList({ value: filters, onChange }) {
             style={{padding: '6px 8px', borderRadius: 8, border: '1px solid #ddd'}}
           >
             {/* permitir 0 rompe la paginación */}
-            <option value={0}>0</option>
             <option value={5}>5</option>
             <option value={10}>10</option>
             <option value={20}>20</option>
@@ -133,7 +134,7 @@ export default function UserList({ value: filters, onChange }) {
         )}
       </ul>
 
-      <nav style={{display: 'flex', gap: 6, justifyContent: 'center', marginTop: 12}}>
+      <nav style={{display: 'flex', gap: 6, justifyContent: 'center', marginTop: 12, alignItems: 'center'}}>
         <button disabled={filters.page <= 1} onClick={() => goTo(filters.page - 1)}>Anterior</button>
         <span>Página {filters.page} / {String(totalPages)}</span>
         <button disabled={filters.page >= totalPages} onClick={() => goTo(filters.page + 1)}>Siguiente</button>
